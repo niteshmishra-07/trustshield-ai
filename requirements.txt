@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+motor
+python-dotenv
+pydantic
+python-multipart
+pytesseract
+Pillow
+groq

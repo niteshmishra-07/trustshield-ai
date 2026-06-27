@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TrustShield AI</title>
+
+    <link rel="stylesheet" href="css/style.css">
+
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+
+<nav class="navbar">
+    <div class="logo">
+        🛡 TrustShield AI
+    </div>
+
+    <ul>
+        <li><a href="#">Dashboard</a></li>
+        <li><a href="history.html">History</a></li>
+    </ul>
+</nav>
+
+
+<section class="hero">
+
+    <div class="hero-left">
+        <h1>Detect Fraud Before It Happens</h1>
+
+        <p>
+            Analyze messages, URLs and screenshots using
+            AI-powered fraud detection.
+        </p>
+
+        <button onclick="scrollToAnalyzer()">
+            Start Analysis
+        </button>
+    </div>
+
+</section>
+
+
+<section class="analyzer" id="analyzer">
+
+    <div class="tabs">
+
+        <button class="tab active"
+                onclick="showTab('text')">
+            Text
+        </button>
+
+        <button class="tab"
+                onclick="showTab('url')">
+            URL
+        </button>
+
+        <button class="tab"
+                onclick="showTab('image')">
+            Image
+        </button>
+
+    </div>
+
+
+    <!-- TEXT -->
+
+    <div id="textTab" class="tab-content active">
+
+        <textarea id="textInput"
+            placeholder="Paste suspicious text here...">
+        </textarea>
+
+        <button onclick="analyzeText()">
+            Analyze
+        </button>
+
+    </div>
+
+
+    <!-- URL -->
+
+    <div id="urlTab" class="tab-content">
+
+        <input type="text"
+               id="urlInput"
+               placeholder="https://example.com">
+
+        <button onclick="analyzeURL()">
+            Analyze
+        </button>
+
+    </div>
+
+
+    <!-- IMAGE -->
+
+    <div id="imageTab" class="tab-content">
+
+        <input type="file"
+               id="imageInput"
+               accept="image/*">
+
+        <button onclick="analyzeImage()">
+            Analyze Image
+        </button>
+
+    </div>
+
+</section>
+
+
+<section id="resultSection" class="results hidden">
+
+    <div class="score-card">
+
+        <canvas id="scoreChart"></canvas>
+
+        <h2 id="verdict">Safe</h2>
+
+    </div>
+
+    <div class="details-card">
+
+        <h3>Red Flags</h3>
+
+        <ul id="redFlags"></ul>
+
+        <h3>Explanation</h3>
+
+        <p id="explanation"></p>
+
+    </div>
+
+</section>
+
+<script src="js/app.js"></script>
+
+</body>
+</html>

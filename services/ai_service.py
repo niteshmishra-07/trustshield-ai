@@ -17,13 +17,23 @@
 
 import os
 import json
+import sys
 from groq import Groq
 from dotenv import load_dotenv
 
 load_dotenv()
 
+_api_key = os.getenv("GROQ_API_KEY")
+if not _api_key:
+    print(
+        "[TrustShield] FATAL: GROQ_API_KEY is not set in your .env file.\n"
+        "              Get a free key at https://console.groq.com/keys and add:\n"
+        "              GROQ_API_KEY=gsk_..."
+    )
+    sys.exit(1)
+
 # Initialize the Groq client with the API key from environment.
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+groq_client = Groq(api_key=_api_key)
 
 # ---------------------------------------------------------------------------
 # FRAUD DETECTION PROMPT TEMPLATE

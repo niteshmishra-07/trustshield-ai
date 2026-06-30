@@ -14,6 +14,7 @@
 # =============================================================================
 
 import os
+import shutil
 import pytesseract
 from PIL import Image, ImageFilter, ImageEnhance
 import io
@@ -21,12 +22,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Tell pytesseract where Tesseract is installed.
-# Defaults to the standard Windows install path; override via TESSERACT_CMD env var.
-pytesseract.pytesseract.tesseract_cmd = os.environ.get(
-    "TESSERACT_CMD",
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# Resolve the Tesseract binary path:
+#   1. Explicit TESSERACT_CMD env var, if set (works on any OS).
+#   2. Auto-detect via PATH (works out of the box on Linux/Mac, and on
+#      Windows if Tesseract's install dir was added to PATH).
+#   3. Fall back to the default Windows install location as a last resort.
+# This avoids hardcoding a Windows-only path that breaks for teammates on
+# other operating systems or with a different install location.
+_configured_cmd = os.environ.get("TESSERACT_CMD")
+_detected_cmd = shutil.which("tesseract")
+
+tesseract_cmd = (
+    _configured_cmd
+    or _detected_cmd
+    or r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 )
+pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
 
 def preprocess_image(image: Image.Image) -> Image.Image:
@@ -86,6 +97,14 @@ def extract_text_from_image(image_bytes: bytes) -> str:
     processed = preprocess_image(image)
 
     # Run Tesseract OCR
-    extracted_text = pytesseract.image_to_string(processed)
+    try:
+        extracted_text = pytesseract.image_to_string(processed)
+    except pytesseract.TesseractNotFoundError:
+        raise RuntimeError(
+            f"Tesseract OCR binary not found at '{tesseract_cmd}'. "
+            "Install it from https://github.com/UB-Mannheim/tesseract/wiki (Windows) "
+            "or `apt install tesseract-ocr` (Linux), then set TESSERACT_CMD in your .env "
+            "if it's not on your PATH."
+        )
 
     return extracted_text.strip()

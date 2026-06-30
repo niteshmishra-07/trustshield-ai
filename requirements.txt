@@ -1,9 +1,17 @@
-fastapi
-uvicorn[standard]
-motor
-python-dotenv
-pydantic
-python-multipart
-pytesseract
-Pillow
-groq
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+motor==3.6.0
+pymongo==4.9.2
+python-dotenv==1.0.1
+pydantic==2.10.4
+python-multipart==0.0.20
+pytesseract==0.3.13
+Pillow==11.0.0
+groq==0.13.1
+certifi==2024.12.14
+
+# Member 4 — URL analysis & QR decoding
+tldextract==5.1.3
+requests==2.32.3
+pyzbar==0.1.9
+qrcode==8.0

@@ -54,6 +54,9 @@ from database import get_database
 from services.ocr_service import extract_text_from_image
 from services.ai_service import analyze_text as ai_analyze_text
 
+# ── Member 4's URL & QR Services ─────────────────────────────────────────
+from services.url_service import build_analysis_summary, decode_qr_from_bytes
+
 # ---------------------------------------------------------------------------
 # Create an APIRouter — FastAPI's way of grouping related endpoints.
 # This is similar to a C++ namespace or a Go package: it provides logical
@@ -307,32 +310,45 @@ async def analyze_text_route(request: TextAnalysisRequest) -> AnalysisResponse:
 )
 async def analyze_url(request: UrlAnalysisRequest) -> AnalysisResponse:
     """
-    Analyze a URL for phishing or fraud indicators using Groq AI.
+    Analyze a URL for phishing or fraud indicators.
 
-    The flow mirrors analyze_text_route().  The only difference is:
-      • Pydantic validates that `request.url` is a well-formed HttpUrl.
-      • We convert the HttpUrl object to a plain string before storing it,
-        because MongoDB's BSON format doesn't have a native URL type.
-      • The AI analyzes the URL string for phishing/fraud patterns.
-
-    ─── Python str() vs C++ .to_string() ──────────────────────────────
-    `str(request.url)` calls the __str__ dunder method on the HttpUrl
-    object, which returns a new string.  In C++, you'd call .to_string()
-    or use a stream insertion operator:
-        std::ostringstream oss;
-        oss << url;
-        auto url_str = oss.str();  // allocates on the heap
-    Python's str() also allocates a new string object on the heap,
-    managed by reference counting + cyclic GC.
+    Flow (Member 4's enhanced pipeline):
+        1. Convert Pydantic HttpUrl → plain string.
+        2. Run Member 4's url_service.build_analysis_summary():
+             - Parse the URL into components (scheme, domain, TLD, etc.)
+             - Run pattern checks (suspicious TLD, impersonation, IP addr, etc.)
+             - If it's a shortlink, follow redirects to find real destination.
+             - Build an enriched text block for the AI prompt.
+        3. Pass the enriched text (not just the raw URL) to Groq AI.
+           This gives the model richer context → better verdict.
+        4. Persist result to MongoDB and return AnalysisResponse.
     """
     db = get_database()
     collection = db["analyses"]
 
-    # Convert Pydantic HttpUrl to plain string for storage & preview.
+    # Convert Pydantic HttpUrl to plain string.
     url_string: str = str(request.url)
 
-    # Run AI-powered fraud analysis on the URL string.
-    analysis_result: dict = _perform_ai_analysis("url", url_string)
+    # ── Member 4: Structural URL analysis ───────────────────────────────
+    url_analysis = build_analysis_summary(url_string)
+
+    # The enriched text includes structural findings so Groq has more
+    # context than just the raw URL string.
+    enriched_text = url_analysis["ai_prompt_text"]
+
+    # Extra metadata to store alongside the AI result
+    extra_details = {
+        "original_url": url_analysis["original_url"],
+        "resolved_url": url_analysis["resolved_url"],
+        "was_shortened": url_analysis["was_shortened"],
+        "domain": url_analysis["domain"],
+        "scheme": url_analysis["scheme"],
+        "tld": url_analysis["suffix"],
+        "structural_flags": url_analysis["structural_flags"],
+    }
+
+    # ── AI analysis on enriched prompt ──────────────────────────────────
+    analysis_result: dict = _perform_ai_analysis("url", enriched_text, extra_details)
 
     document: dict = {
         "input_type": "url",
@@ -354,6 +370,110 @@ async def analyze_url(request: UrlAnalysisRequest) -> AnalysisResponse:
     return AnalysisResponse(
         id=str(result.inserted_id),
         input_type="url",
+        risk_score=analysis_result["risk_score"],
+        verdict=analysis_result["verdict"],
+        details=analysis_result["details"],
+        analyzed_at=document["analyzed_at"],
+    )
+
+
+# =============================================================================
+# POST /analyze/qr  (Member 4 — QR Code Decoding)
+# =============================================================================
+
+@router.post(
+    "/qr",
+    response_model=AnalysisResponse,
+    summary="Decode a QR code image and analyze the embedded URL",
+    description=(
+        "Accepts a multipart image upload of a QR code. "
+        "Decodes the QR to extract the embedded URL, then runs the full "
+        "URL fraud analysis pipeline (structural checks + Groq AI)."
+    ),
+)
+async def analyze_qr(
+    file: UploadFile = File(..., description="An image file containing a QR code.")
+) -> AnalysisResponse:
+    """
+    Decode a QR code and analyze the embedded URL for fraud.
+
+    Flow:
+        1. Validate that uploaded file is an image.
+        2. Read raw bytes from the upload.
+        3. Call url_service.decode_qr_from_bytes() — uses pyzbar to decode.
+        4. If decoding fails, return a 422 with a clear error message.
+        5. Pass the decoded URL through the full URL analysis pipeline
+           (same as /analyze/url): structural checks → enriched text → AI.
+        6. Persist and return AnalysisResponse.
+
+    Requires pyzbar installed:
+        pip install pyzbar
+    Windows also needs the ZBar DLLs — see:
+        https://github.com/NaturalHistoryMuseum/pyzbar#windows-error
+    """
+    if file.content_type is None or not file.content_type.startswith("image/"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid file type '{file.content_type}'. Only image files are accepted.",
+        )
+
+    contents: bytes = await file.read()
+
+    # ── Member 4: QR decoding ────────────────────────────────────────────
+    decoded_data = decode_qr_from_bytes(contents)
+
+    if not decoded_data:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No QR code detected in the uploaded image. "
+                "Ensure the image is clear, well-lit, and contains a single QR code. "
+                "Also confirm pyzbar is installed: pip install pyzbar"
+            ),
+        )
+
+    # The QR code might contain a URL or just plain text.
+    # Either way, run it through url_service for structural analysis.
+    url_analysis = build_analysis_summary(decoded_data)
+    enriched_text = url_analysis["ai_prompt_text"]
+
+    extra_details = {
+        "qr_decoded_content": decoded_data,
+        "original_url": url_analysis["original_url"],
+        "resolved_url": url_analysis["resolved_url"],
+        "was_shortened": url_analysis["was_shortened"],
+        "domain": url_analysis["domain"],
+        "scheme": url_analysis["scheme"],
+        "tld": url_analysis["suffix"],
+        "structural_flags": url_analysis["structural_flags"],
+        "source_filename": file.filename,
+    }
+
+    analysis_result: dict = _perform_ai_analysis("url", enriched_text, extra_details)
+
+    db = get_database()
+    collection = db["analyses"]
+
+    document: dict = {
+        "input_type": "qr",
+        "input_data": decoded_data,
+        "risk_score": analysis_result["risk_score"],
+        "verdict": analysis_result["verdict"],
+        "details": analysis_result["details"],
+        "analyzed_at": datetime.now(timezone.utc),
+    }
+
+    try:
+        result = await collection.insert_one(document)
+    except ServerSelectionTimeoutError:
+        raise HTTPException(
+            status_code=503,
+            detail="MongoDB is unavailable. Ensure mongod is running on the configured MONGO_URI.",
+        )
+
+    return AnalysisResponse(
+        id=str(result.inserted_id),
+        input_type="qr",
         risk_score=analysis_result["risk_score"],
         verdict=analysis_result["verdict"],
         details=analysis_result["details"],

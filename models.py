@@ -32,7 +32,7 @@
 
 from datetime import datetime, timezone
 from typing import Optional
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -63,16 +63,37 @@ class UrlAnalysisRequest(BaseModel):
     Schema for POST /analyze/url.
 
     Fields:
-        url (HttpUrl): A validated URL string.
+        url (str): The raw URL string to analyze.
 
-    Pydantic's HttpUrl type checks that the string is a well-formed URL
-    with an http or https scheme.  In C++, you'd typically validate this
-    manually with a regex or a URI-parsing library like Boost.URL.
+    ─── Why NOT Pydantic's HttpUrl ─────────────────────────────────────
+    Pydantic's HttpUrl type validates the domain against strict IDNA
+    (internationalized-domain) rules using pydantic-core's Rust `url`
+    crate. That's exactly wrong for a phishing detector: attackers
+    deliberately craft punycode labels (e.g. "xn--paypa1-h3a.com") that
+    are syntactically punycode-shaped but do NOT decode to a legal IDNA
+    label. HttpUrl rejects those with a 422 before our analysis code
+    ever runs -- silently blinding the tool to the exact homograph and
+    malformed-punycode attacks it exists to catch.
+
+    Instead we accept any non-empty string here and let
+    services/url_service.py do lenient, fraud-analysis-aware parsing
+    (it already has an `is_valid: False` fallback path for URLs that
+    can't be parsed at all, and treats that as a signal, not an error).
     """
-    url: HttpUrl = Field(
+    url: str = Field(
         ...,
-        description="The URL to analyze for phishing or fraud."
+        min_length=1,
+        max_length=2048,
+        description="The URL to analyze for phishing or fraud (any string; malformed URLs are treated as a fraud signal, not rejected)."
     )
+
+    @field_validator("url")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("url must not be blank")
+        return v
 
 
 # ---------------------------------------------------------------------------

@@ -57,7 +57,7 @@ Return this exact JSON structure:
 {{
   "trust_score": <integer 0-100, where 100 is fully trustworthy>,
   "verdict": "<one of: Safe | Suspicious | Scam>",
-  "category": "<one of: Phishing | Fake Job Offer | Fake Internship | UPI Payment Fraud | Lottery Scam | Banking/KYC Scam | Scholarship Scam | Fake Customer Support | Malicious Link | Unknown>",
+  "category": "<one of: Phishing | Fake Job Offer | Fake Internship | UPI Payment Fraud | Lottery Scam | Banking/KYC Scam | Financial Fraud | Investment Scam | Scholarship Scam | Fake Customer Support | Malicious Link | Unknown>",
   "red_flags": [<list of specific warning signs found, as plain strings>],
   "explanation": "<2-3 sentence plain English explanation of your verdict, suitable for a non-technical user>"
 }}

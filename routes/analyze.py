@@ -39,6 +39,7 @@
 #
 # =============================================================================
 
+import asyncio
 import random
 from datetime import datetime, timezone
 
@@ -260,7 +261,12 @@ async def analyze_text_route(request: TextAnalysisRequest) -> AnalysisResponse:
     collection = db["analyses"]
 
     # Run AI-powered fraud analysis via Member 3's service.
-    analysis_result: dict = _perform_ai_analysis("text", request.text)
+    # NOTE: ai_analyze_text() makes a synchronous, blocking network call to
+    # Groq. Calling it directly here would freeze the entire event loop
+    # (and every other in-flight request) for the full round-trip. We
+    # offload it to a worker thread with asyncio.to_thread so the loop
+    # stays free to serve other requests concurrently.
+    analysis_result: dict = await asyncio.to_thread(_perform_ai_analysis, "text", request.text)
 
     # Build the MongoDB document.  In Python, dicts are the native format
     # for MongoDB documents — motor/pymongo handle serialization to BSON.
@@ -326,11 +332,15 @@ async def analyze_url(request: UrlAnalysisRequest) -> AnalysisResponse:
     db = get_database()
     collection = db["analyses"]
 
-    # Convert Pydantic HttpUrl to plain string.
-    url_string: str = str(request.url)
+    # request.url is now a plain, leniently-validated string (see models.py
+    # for why we deliberately do NOT use Pydantic's HttpUrl here).
+    url_string: str = request.url
 
     # ── Member 4: Structural URL analysis ───────────────────────────────
-    url_analysis = build_analysis_summary(url_string)
+    # build_analysis_summary() may call unshorten_url(), which makes a
+    # synchronous `requests` HTTP call (with up to a 5s timeout, possibly
+    # twice). Run it in a worker thread so it can't block the event loop.
+    url_analysis = await asyncio.to_thread(build_analysis_summary, url_string)
 
     # The enriched text includes structural findings so Groq has more
     # context than just the raw URL string.
@@ -348,7 +358,10 @@ async def analyze_url(request: UrlAnalysisRequest) -> AnalysisResponse:
     }
 
     # ── AI analysis on enriched prompt ──────────────────────────────────
-    analysis_result: dict = _perform_ai_analysis("url", enriched_text, extra_details)
+    # Same reasoning as /analyze/text: offload the blocking Groq call.
+    analysis_result: dict = await asyncio.to_thread(
+        _perform_ai_analysis, "url", enriched_text, extra_details
+    )
 
     document: dict = {
         "input_type": "url",
@@ -420,7 +433,9 @@ async def analyze_qr(
     contents: bytes = await file.read()
 
     # ── Member 4: QR decoding ────────────────────────────────────────────
-    decoded_data = decode_qr_from_bytes(contents)
+    # Image decoding + pyzbar scanning is CPU-bound; offload it so a large
+    # image can't stall the event loop for other concurrent requests.
+    decoded_data = await asyncio.to_thread(decode_qr_from_bytes, contents)
 
     if not decoded_data:
         raise HTTPException(
@@ -434,7 +449,7 @@ async def analyze_qr(
 
     # The QR code might contain a URL or just plain text.
     # Either way, run it through url_service for structural analysis.
-    url_analysis = build_analysis_summary(decoded_data)
+    url_analysis = await asyncio.to_thread(build_analysis_summary, decoded_data)
     enriched_text = url_analysis["ai_prompt_text"]
 
     extra_details = {
@@ -449,7 +464,9 @@ async def analyze_qr(
         "source_filename": file.filename,
     }
 
-    analysis_result: dict = _perform_ai_analysis("url", enriched_text, extra_details)
+    analysis_result: dict = await asyncio.to_thread(
+        _perform_ai_analysis, "url", enriched_text, extra_details
+    )
 
     db = get_database()
     collection = db["analyses"]
@@ -539,8 +556,11 @@ async def analyze_image(
     collection = db["analyses"]
 
     # ── OCR: Extract text from the image using Member 3's service ────
+    # Tesseract OCR is CPU-bound and can take a noticeable amount of time
+    # on larger images; run it in a worker thread to keep the event loop
+    # responsive for other requests.
     try:
-        extracted_text = extract_text_from_image(contents)
+        extracted_text = await asyncio.to_thread(extract_text_from_image, contents)
     except Exception as e:
         raise HTTPException(
             status_code=422,
@@ -558,7 +578,9 @@ async def analyze_image(
         "file_size_bytes": file_size,
         "extracted_text_preview": extracted_text[:500],
     }
-    analysis_result: dict = _perform_ai_analysis("image", extracted_text, extra_details)
+    analysis_result: dict = await asyncio.to_thread(
+        _perform_ai_analysis, "image", extracted_text, extra_details
+    )
 
     document: dict = {
         "input_type": "image",
